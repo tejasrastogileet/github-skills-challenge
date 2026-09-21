@@ -1,4 +1,5 @@
 from pathlib import Path
+import runpy
 
 from src.anomaly_detector import AnomalyDetector
 from src.aiops_pipeline import run_pipeline
@@ -70,3 +71,50 @@ def test_consumer_receives_event():
     messages = consumer.consume()
 
     assert len(messages) == 1
+
+
+def test_detector_reports_all_threshold_breaches():
+    detector = AnomalyDetector()
+    record = {
+        "timestamp": "2026-09-20T10:06:00",
+        "service": "payment-service",
+        "response_time_ms": 610,
+        "cpu_percent": 81,
+        "memory_percent": 81,
+        "log_level": "WARNING",
+        "message": "Service is degraded",
+    }
+
+    event = detector.detect(record)
+
+    assert event["reasons"] == [
+        "High response time",
+        "High CPU utilization",
+        "High memory utilization",
+        "Error log detected",
+    ]
+
+
+def test_producer_rejects_empty_events_and_topic_can_be_cleared():
+    topic = EventTopic("anomaly-events")
+    producer = EventProducer(topic)
+
+    assert producer.publish(None) is False
+    producer.publish({"type": "ANOMALY"})
+    topic.clear()
+
+    assert topic.get_messages() == []
+
+
+def test_pipeline_processes_data_file():
+    result = run_pipeline(Path("data/service_data.json"))
+
+    assert result["records_processed"] == 10
+    assert len(result["anomalies_detected"]) == 2
+    assert result["events_consumed"] == []
+
+
+def test_pipeline_script_entry_point(capsys):
+    runpy.run_path("src/aiops_pipeline.py", run_name="__main__")
+
+    assert "AIOps Pipeline Result" in capsys.readouterr().out
